@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SpikeELO</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -156,29 +157,67 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
   <div class="login-box">
     <div class="login-logo">🏐</div>
     <div class="login-title">SpikeELO</div>
-    <div class="login-sub">Who are you?</div>
-    <div id="login-loading" class="loading">Loading players...</div>
-    <div id="player-picker" class="player-picker" style="display:none"></div>
+    <div class="login-sub">Sign in</div>
+    <div id="login-loading" class="loading" style="display:none">Loading...</div>
+    <div id="login-form">
+      <div class="form-group" style="text-align:left">
+        <label class="form-label" for="email-input">Email</label>
+        <input class="form-input" id="email-input" placeholder="you@example.com" inputmode="email" autocomplete="email">
+      </div>
+      <button class="btn btn-primary btn-full" onclick="sendMagicLink()">Continue with Email</button>
+      <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="continueAsGuest()">Continue as Guest</button>
+      <div class="loading" id="magic-sending" style="display:none">Sending magic link...</div>
+    </div>
+
+    <div id="onboarding-screen" style="display:none;margin-top:14px">
+      <div class="login-sub" style="margin-bottom:10px">Choose your Spikeball username</div>
+      <div class="form-group" style="text-align:left;margin-top:6px">
+        <label class="form-label" for="username-input">Username</label>
+        <input class="form-input" id="username-input" placeholder="e.g. The Net Wars" maxlength="24">
+      </div>
+      <button class="btn btn-ghost btn-full" onclick="submitUsername()">Set Username</button>
+    </div>
+
     <div id="login-msg"></div>
   </div>
 </div>
 
 <!-- MAIN APP (hidden until logged in) -->
-<div id="app" style="display:none">
+<div id="app">
   <nav class="nav">
     <div class="nav-brand">🏐 <span>Spike</span>ELO</div>
     <button class="nav-btn active" onclick="showPage('leaderboard')">Leaderboard</button>
-    <button class="nav-btn" onclick="showPage('record')">Record</button>
-    <button class="nav-btn" onclick="showPage('history')">History</button>
-    <button class="nav-btn" id="nav-players" onclick="showPage('players')" style="display:none">Players</button>
-    <button class="nav-btn" onclick="showPage('stats')">Stats</button>
+    <button class="nav-btn" id="nav-record" onclick="showPage('record')" style="display:none">Record</button>
+    <button class="nav-btn" id="nav-history" onclick="showPage('history')" style="display:none">History</button>
+    <button class="nav-btn" id="nav-rules" onclick="showPage('rules')">Rules</button>
+    <button class="nav-btn" id="nav-chat" onclick="showPage('chat')" style="display:none">Chat</button>
+    <button class="nav-btn" id="nav-players" onclick="showPage('players')" style="display:none">Admin</button>
+    <button class="nav-btn" id="nav-stats" onclick="showPage('stats')" style="display:none">Stats</button>
     <div class="nav-spacer"></div>
-    <div class="nav-user">Hi, <strong id="nav-username"></strong></div>
-    <button class="logout-btn" onclick="logout()">Sign out</button>
+    <div class="nav-user">Hi, <strong id="nav-username">Guest</strong></div>
+    <button class="logout-btn" id="nav-login" onclick="openLogin()">Sign in</button>
+    <button class="logout-btn" id="nav-logout" onclick="logout()" style="display:none">Sign out</button>
   </nav>
 
   <div id="page-leaderboard" class="page active">
     <div class="section-title">Leaderboard <small id="lb-count"></small></div>
+    <div class="card" style="margin-bottom:10px">
+      <div class="row2" style="align-items:end;grid-template-columns:1fr 180px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" for="lb-search">Search players</label>
+          <input class="form-input" id="lb-search" placeholder="Type a username">
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" for="lb-sort">Sort by</label>
+          <select class="form-select" id="lb-sort">
+            <option value="elo">Decayed ELO</option>
+            <option value="wins">Wins</option>
+            <option value="winrate">Win rate</option>
+            <option value="activity">Most active</option>
+          </select>
+        </div>
+      </div>
+    </div>
     <div class="card" id="leaderboard-list"><div class="loading">Loading...</div></div>
   </div>
 
@@ -230,28 +269,154 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
     <div id="history-list"><div class="loading">Loading...</div></div>
   </div>
 
-  <div id="page-players" class="page">
-    <div class="section-title">Players (Admin)</div>
-    <div class="card" style="margin-bottom:16px">
-      <div class="card-title">Add Player</div>
-      <div id="add-player-msg"></div>
+  <div id="page-rules" class="page">
+    <div class="section-title">Official Rules <small id="rules-updated">Last Updated: May 31, 2026</small></div>
+    <div class="card" style="margin-bottom:12px">
       <div class="row2" style="align-items:end">
         <div class="form-group" style="margin-bottom:0">
-          <label class="form-label">Name</label>
-          <input class="form-input" id="new-player-name" placeholder="Player name" onkeydown="if(event.key==='Enter')addPlayer()">
+          <label class="form-label" for="rules-search">Search rules</label>
+          <input class="form-input" id="rules-search" placeholder="e.g. serve, let, rim, net contact">
         </div>
-        <div style="display:flex;gap:6px;align-items:end">
-          <button class="btn btn-primary" onclick="addPlayer()">Add</button>
+        <div class="form-group" style="margin-bottom:0">
+          <button class="btn btn-ghost btn-full" onclick="clearRulesSearch()">Clear</button>
         </div>
-      </div>
-      <div style="margin-top:10px">
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);cursor:pointer">
-          <input type="checkbox" id="new-player-admin"> Make admin
-        </label>
       </div>
     </div>
-    <div class="section-title" style="margin-top:8px">Roster <small id="roster-count"></small></div>
-    <div id="player-list"><div class="loading">Loading...</div></div>
+
+    <div class="card">
+      <details open>
+        <summary><strong>Equipment</strong></summary>
+        <p style="color:var(--text2);margin-top:10px;line-height:1.5">
+          A Spikeball™ net and ball are used for official tournament play. The net tension should be consistent.
+        </p>
+      </details>
+      <details>
+        <summary><strong>Court Setup</strong></summary>
+        <p style="color:var(--text2);margin-top:10px;line-height:1.5">
+          A circular net is placed at the center. Serving typically occurs from behind a service boundary (commonly ~6 feet from the net).
+        </p>
+      </details>
+      <details>
+        <summary><strong>Serving</strong></summary>
+        <p style="color:var(--text2);margin-top:10px;line-height:1.5">
+          The serve is hit from behind the service line into the net. Serves must be below the receiver’s raised hand; the receiver may call “let” on certain issues.
+        </p>
+      </details>
+      <details>
+        <summary><strong>Rally Scoring</strong></summary>
+        <p style="color:var(--text2);margin-top:10px;line-height:1.5">
+          Spikeball uses rally scoring. Games are commonly played to 21, win by two (tournament formats can vary).
+        </p>
+      </details>
+      <details>
+        <summary><strong>Hits</strong></summary>
+        <p style="color:var(--text2);margin-top:10px;line-height:1.5">
+          Each team has up to three hits per possession. Hits must alternate between teammates; the ball must be hit (not caught/lifted/thrown).
+        </p>
+      </details>
+      <details>
+        <summary><strong>Faults</strong></summary>
+        <p style="color:var(--text2);margin-top:10px;line-height:1.5">
+          Common faults include invalid serves and failing to return the ball legally within three hits.
+        </p>
+      </details>
+      <details>
+        <summary><strong>Possession Rules</strong></summary>
+        <p style="color:var(--text2);margin-top:10px;line-height:1.5">
+          Possession changes when the ball contacts the net in specific ways (and other rule infractions result in a point loss and change of possession).
+        </p>
+      </details>
+      <details>
+        <summary><strong>Net Contact Rules</strong></summary>
+        <p style="color:var(--text2);margin-top:10px;line-height:1.5">
+          After the serve, the ball must bounce off the net in a single bounce, clearing the rim to be good.
+        </p>
+      </details>
+      <details>
+        <summary><strong>Interference Rules</strong></summary>
+        <p style="color:var(--text2);margin-top:10px;line-height:1.5">
+          Interference (e.g., hindering an opponent) can result in a penalty. If players cannot determine if the ball hit the rim, replay the point.
+        </p>
+      </details>
+      <details>
+        <summary><strong>Tournament Rules</strong></summary>
+        <p style="color:var(--text2);margin-top:10px;line-height:1.5">
+          Tournament directors may specify formats (scoring to a certain point, tie rules, and service/let procedures). Follow the official event rules.
+        </p>
+      </details>
+      <details>
+        <summary><strong>Frequently Asked Questions</strong></summary>
+        <p style="color:var(--text2);margin-top:10px;line-height:1.5">
+          For “let” and rim/pocket situations, consult the official rules linked below and agree on interpretations before play.
+        </p>
+      </details>
+
+      <hr class="divider">
+      <div style="color:var(--text2);line-height:1.6;font-size:13px">
+        Sources:
+        <ul style="margin-top:8px">
+          <li><a href="https://tournaments.spikeball.com/pages/official-rules" target="_blank" rel="noreferrer">Spikeball Tour Series – Official Rules</a></li>
+          <li><a href="https://www.spikeball.com/pages/spikeball-rules-how-to-play" target="_blank" rel="noreferrer">Spikeball Store – Rules How to Play</a></li>
+          <li><a href="https://campusrecreation.ucdavis.edu/sites/g/files/dgvnsk6556/files/inline-files/Official%20Spikeball%20Tournament%20Rules%20Spring%202022.pdf" target="_blank" rel="noreferrer">Official Spikeball Tournament Rules (PDF)</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div id="page-chat" class="page">
+    <div class="section-title">Community Chat</div>
+    <div class="card" style="padding:12px">
+      <div id="chat-status" class="restricted-note" style="display:none;margin-bottom:12px"></div>
+      <div id="chat-messages" style="max-height:420px;overflow:auto;padding-right:6px"></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="row2" style="grid-template-columns:1fr auto;gap:8px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" for="chat-input">Message</label>
+          <input class="form-input" id="chat-input" placeholder="Type a message…" maxlength="500">
+        </div>
+        <div style="align-self:end">
+          <button class="btn btn-primary" style="height:40px" onclick="sendChatMessage()">Send</button>
+        </div>
+      </div>
+      <div style="margin-top:10px;color:var(--text3);font-size:12px">
+        Edit/delete your own messages for 10 minutes. Admin moderation is enforced on the server.
+      </div>
+    </div>
+  </div>
+
+  <div id="page-players" class="page">
+    <div class="section-title">Admin</div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">ELO Decay Settings</div>
+      <div id="admin-decay-msg" style="margin-bottom:10px"></div>
+      <div class="row2" style="align-items:end">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" for="decay-grace">Grace period (days)</label>
+          <input class="form-input" id="decay-grace" type="number" min="0" step="1">
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" for="decay-frequency">Decay frequency (days)</label>
+          <input class="form-input" id="decay-frequency" type="number" min="1" step="1">
+        </div>
+      </div>
+      <div class="row2" style="align-items:end;margin-top:10px">
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" for="decay-amount">ELO loss per step</label>
+          <input class="form-input" id="decay-amount" type="number" min="0" step="1">
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label class="form-label" for="decay-floor">ELO floor</label>
+          <input class="form-input" id="decay-floor" type="number" min="0" step="1">
+        </div>
+      </div>
+      <div style="margin-top:12px">
+        <button class="btn btn-primary btn-full" onclick="saveDecaySettings()">Save Settings</button>
+      </div>
+    </div>
+
+    <div class="section-title" style="margin-top:8px">Moderate Users</div>
+    <div id="admin-users-list"><div class="loading">Loading...</div></div>
   </div>
 
   <div id="page-stats" class="page">
@@ -272,11 +437,20 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 // ============================================================
 const SUPABASE_URL = 'https://jojrekrpfmpofwprosxk.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpvanJla3JwZm1wb2Z3cHJvc3hrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAxNjUzMTQsImV4cCI6MjA5NTc0MTMxNH0.RNMSrv0msySs3pPdNvJDo33f7CvlGLm_eR7fO08d_yw';
+const SITE_URL = 'https://dez7l.github.io/SpikeElo/';
+const { createClient } = supabase;
+const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+});
 // ============================================================
 
 const BASE_WIN_K = 30, BASE_LOSS_K = 20;
 
 let currentUser = null;
+let myAuthUser = null;
+let myAccount = null;
+let myPlayerId = null;
+let decaySettings = null;
 let players = [];
 let matches = [];
 let eloHistory = {};
@@ -347,62 +521,240 @@ function recalcELO(){
 
 // ---- Load data ----
 async function loadData(){
-  [players, matches] = await Promise.all([
-    sbGet('players','order=name.asc'),
-    sbGet('matches','order=ts.asc')
+  const [psRes, msRes, dsRes] = await Promise.all([
+    supabaseClient.from('players_public').select('*').order('name',{ascending:true}),
+    supabaseClient.from('matches').select('*').order('ts',{ascending:true}),
+    supabaseClient.from('elo_decay_settings').select('*').eq('id',1).single()
   ]);
+
+  if(psRes.error) throw psRes.error;
+  if(msRes.error) throw msRes.error;
+  if(dsRes.error) throw dsRes.error;
+
+  players = (psRes.data||[]).map(p=>({
+    ...p,
+    last_match_at: p.last_match_at ? Date.parse(p.last_match_at) : null,
+    last_activity_at: p.last_activity_at ? Date.parse(p.last_activity_at) : null
+  }));
+  matches = (msRes.data||[]).map(m=>({
+    ...m,
+    ts: m.ts ? Date.parse(m.ts) : null
+  }));
+  decaySettings = dsRes.data;
+
   recalcELO();
 }
 
-// ---- LOGIN ----
-async function initLogin(){
-  try {
-    const ps = await sbGet('players','order=name.asc');
-    players = ps;
-    recalcELO();
-    document.getElementById('login-loading').style.display='none';
-    const picker = document.getElementById('player-picker');
-    picker.style.display='grid';
-    if(!ps.length){
-      picker.innerHTML='<div style="color:var(--text3);font-size:13px;text-align:center;padding:12px">No players yet. Ask your admin to add players first.</div>';
-      return;
+// ---- Auth + Onboarding ----
+async function initAuth(){
+  // Default state: public leaderboard visible, protected actions hidden.
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('login-loading').style.display='none';
+  document.getElementById('login-msg').innerHTML='';
+  document.getElementById('magic-sending').style.display='none';
+
+  document.getElementById('login-form').style.display='';
+  document.getElementById('onboarding-screen').style.display='none';
+
+  document.getElementById('nav-record').style.display='none';
+  document.getElementById('nav-history').style.display='';
+  document.getElementById('nav-chat').style.display='none';
+  document.getElementById('nav-stats').style.display='none';
+  document.getElementById('nav-players').style.display='none';
+  document.getElementById('nav-login').style.display='';
+  document.getElementById('nav-logout').style.display='none';
+  document.getElementById('nav-username').textContent='Guest';
+  document.getElementById('app').style.display='block';
+
+  const { data: sessionData, error: sessionError } = await supabaseClient.auth.getSession();
+  if(sessionError) console.error(sessionError);
+  const session = sessionData?.session || null;
+  myAuthUser = session ? session.user : null;
+  myAccount = null;
+  myPlayerId = null;
+  currentUser = null;
+
+  if(myAuthUser){
+    const { data: acct, error: acctError } = await supabaseClient
+      .from('player_accounts')
+      .select('*')
+      .eq('auth_user_id', myAuthUser.id)
+      .maybeSingle();
+
+    if(acctError) console.error(acctError);
+
+    if(acct){
+      if(acct.account_disabled){
+        document.getElementById('login-msg').innerHTML='<div class="alert alert-error">Your account is disabled.</div>';
+        await supabaseClient.auth.signOut();
+        myAuthUser = null;
+        currentUser = null;
+      } else {
+        myAccount = acct;
+        myPlayerId = acct.player_id;
+      }
+    } else {
+      // First login: pick a username
+      document.getElementById('login-form').style.display='none';
+      document.getElementById('onboarding-screen').style.display='block';
+      document.getElementById('login-msg').innerHTML='<div class="alert alert-info">Welcome! Pick a unique Spikeball username.</div>';
     }
-    picker.innerHTML = [...ps].sort((a,b)=>b.elo-a.elo).map(p=>`
-      <button class="player-pick-btn" onclick="selectPlayer('${p.id}')">
-        <span>${esc(p.name)}</span>
-        ${p.is_admin?'<span class="admin-badge">admin</span>':''}
-        <span class="elo-badge">${p.elo}</span>
-      </button>`).join('');
+  }
+
+  // Load public data and render leaderboard/history.
+  await loadAndRender();
+
+  // If we have a linked player account, enable protected nav.
+  if(myPlayerId && currentUser){
+    document.getElementById('login-screen').style.display='none';
+    document.getElementById('app').style.display='block';
+    document.getElementById('nav-username').textContent = currentUser.name;
+    document.getElementById('nav-record').style.display='';
+    document.getElementById('nav-history').style.display='';
+    document.getElementById('nav-chat').style.display='';
+    document.getElementById('nav-stats').style.display='';
+    document.getElementById('nav-login').style.display='none';
+    document.getElementById('nav-logout').style.display='';
+    if(currentUser.is_admin) document.getElementById('nav-players').style.display='';
+  }
+
+  setupRulesSearch();
+  setupLeaderboardControls();
+  setRestrictedNote();
+  if(myPlayerId && currentPageIsChat()) setupChat(); // initialize chat only for authed users
+}
+
+async function sendMagicLink(){
+  const emailEl=document.getElementById('email-input');
+  const email=(emailEl.value||'').trim();
+  const msg=document.getElementById('login-msg');
+  msg.innerHTML='';
+  if(!email || !email.includes('@')){
+    msg.innerHTML='<div class="alert alert-error">Enter a valid email address.</div>';
+    return;
+  }
+  document.getElementById('magic-sending').style.display='';
+  try{
+    const { error } = await supabaseClient.auth.signInWithOtp({
+      email,
+      options:{ emailRedirectTo: SITE_URL }
+    });
+    if(error) throw error;
+    msg.innerHTML='<div class="alert alert-info">Check your email for the magic link.</div>';
   } catch(e){
-    document.getElementById('login-loading').innerHTML='<div class="alert alert-error">Could not connect to database. Check your Supabase config.</div>';
+    msg.innerHTML=`<div class="alert alert-error">Error: ${esc(e.message)}</div>`;
+  } finally {
+    document.getElementById('magic-sending').style.display='none';
   }
 }
 
-function selectPlayer(pid){
-  currentUser = players.find(p=>p.id===pid);
-  if(!currentUser) return;
-  localStorage.setItem('spikeelo_user', pid);
-  startApp();
-}
-
-function logout(){
-  localStorage.removeItem('spikeelo_user');
-  currentUser = null;
-  location.reload();
-}
-
-function startApp(){
+function continueAsGuest(){
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='block';
-  document.getElementById('nav-username').textContent = currentUser.name;
-  if(currentUser.is_admin) document.getElementById('nav-players').style.display='';
-  loadAndRender();
+  showPage('leaderboard');
+}
+
+function openLogin(){
+  document.getElementById('login-screen').style.display='flex';
+}
+
+async function submitUsername(){
+  const usernameEl=document.getElementById('username-input');
+  const username=(usernameEl.value||'').trim();
+  const msg=document.getElementById('login-msg');
+  msg.innerHTML='';
+
+  if(username.length < 3){
+    msg.innerHTML='<div class="alert alert-error">Username must be at least 3 characters.</div>';
+    return;
+  }
+  if(username.length > 24){
+    msg.innerHTML='<div class="alert alert-error">Username must be 24 characters or fewer.</div>';
+    return;
+  }
+  if(!/^[a-zA-Z0-9 _-]+$/.test(username)){
+    msg.innerHTML='<div class="alert alert-error">Use only letters, numbers, spaces, underscores, and hyphens.</div>';
+    return;
+  }
+  if(!myAuthUser){
+    msg.innerHTML='<div class="alert alert-error">Please sign in again.</div>';
+    return;
+  }
+
+  document.getElementById('magic-sending').style.display='';
+  try{
+    const { data: playerData, error: playerError } = await supabaseClient
+      .from('players')
+      .insert({ name: username })
+      .select('id,name')
+      .single();
+
+    if(playerError) throw playerError;
+    const { error: acctError } = await supabaseClient
+      .from('player_accounts')
+      .insert({ player_id: playerData.id, auth_user_id: myAuthUser.id });
+    if(acctError) throw acctError;
+
+    // Refresh account + player
+    const { data: acct } = await supabaseClient
+      .from('player_accounts')
+      .select('*')
+      .eq('auth_user_id', myAuthUser.id)
+      .single();
+
+    myAccount = acct;
+    myPlayerId = acct.player_id;
+    document.getElementById('login-screen').style.display='none';
+    document.getElementById('app').style.display='block';
+    document.getElementById('login-msg').innerHTML='<div class="alert alert-success">Profile created!</div>';
+
+    await loadAndRender();
+    document.getElementById('nav-username').textContent = currentUser?.name || 'Player';
+    document.getElementById('nav-record').style.display='';
+    document.getElementById('nav-history').style.display='';
+    document.getElementById('nav-chat').style.display='';
+    document.getElementById('nav-stats').style.display='';
+    document.getElementById('nav-login').style.display='none';
+    document.getElementById('nav-logout').style.display='';
+    if(currentUser?.is_admin) document.getElementById('nav-players').style.display='';
+
+    setRestrictedNote();
+  } catch(e){
+    msg.innerHTML=`<div class="alert alert-error">Could not create profile: ${esc(e.message)}</div>`;
+  } finally {
+    document.getElementById('magic-sending').style.display='none';
+  }
+}
+
+async function logout(){
+  try{ await supabaseClient.auth.signOut(); } catch(e){}
+  myAuthUser = null;
+  myAccount = null;
+  myPlayerId = null;
+  currentUser = null;
+
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('app').style.display='block';
+  document.getElementById('login-form').style.display='';
+  document.getElementById('onboarding-screen').style.display='none';
+  document.getElementById('login-msg').innerHTML='';
+
+  // Re-render public leaderboard without an authenticated player.
+  await loadAndRender();
+  document.getElementById('nav-username').textContent='Guest';
+  document.getElementById('nav-record').style.display='none';
+  document.getElementById('nav-history').style.display='';
+  document.getElementById('nav-chat').style.display='none';
+  document.getElementById('nav-stats').style.display='none';
+  document.getElementById('nav-players').style.display='none';
+  document.getElementById('nav-login').style.display='';
+  document.getElementById('nav-logout').style.display='none';
   setRestrictedNote();
 }
 
 function setRestrictedNote(){
   const el = document.getElementById('record-restricted');
-  if(currentUser.is_admin){
+  if(currentUser && currentUser.is_admin){
     el.style.display='none';
   } else {
     el.style.display='block';
@@ -413,6 +765,8 @@ function setRestrictedNote(){
 // ---- Render ----
 async function loadAndRender(){
   await loadData();
+  currentUser = myPlayerId ? players.find(p=>p.id===myPlayerId) : null;
+  if(currentUser && myAccount) currentUser.is_admin = myAccount.is_admin;
   renderAll();
 }
 
@@ -425,7 +779,54 @@ function renderAll(){
 }
 
 function renderLeaderboard(){
-  const sorted=[...players].sort((a,b)=>b.elo-a.elo);
+  const getDecay = (p)=>{
+    if(!decaySettings || !p || p.last_activity_at == null) {
+      return { decayedElo: p?.elo ?? 1500, lost: 0, inactiveDays: 0, steps: 0, nextDecayAt: null, floored: false };
+    }
+    const now = Date.now();
+    const inactivityDays = Math.max(0, Math.floor((now - p.last_activity_at) / 86400000));
+    const grace = decaySettings.grace_period_days ?? 0;
+    const freq = decaySettings.decay_frequency_days ?? 1;
+    const amount = decaySettings.decay_amount_per_step ?? 0;
+    const floor = decaySettings.elo_floor ?? 0;
+    const daysPastGrace = Math.max(0, inactivityDays - grace);
+    const steps = Math.floor(daysPastGrace / freq);
+    const rawLost = steps * amount;
+    const maxLost = Math.max(0, (p.elo ?? 1500) - floor);
+    const lost = Math.min(rawLost, maxLost);
+    const decayedElo = Math.max((p.elo ?? 1500) - lost, floor);
+    const floored = lost >= maxLost && maxLost > 0;
+    let nextDecayAt = null;
+    if(!floored && p.last_activity_at){
+      const nextOffsetDays = grace + freq * (steps + 1);
+      const candidate = p.last_activity_at + nextOffsetDays * 86400000;
+      if(candidate > now) nextDecayAt = new Date(candidate);
+    }
+    return { decayedElo, lost, inactiveDays, steps, nextDecayAt, floored };
+  };
+
+  let withDecay = players.map(p=>{
+    const d = getDecay(p);
+    return { p, d };
+  });
+
+  const q = (document.getElementById('lb-search')?.value || '').trim().toLowerCase();
+  if(q){
+    withDecay = withDecay.filter(({p})=>p.name.toLowerCase().includes(q));
+  }
+
+  const sortBy = document.getElementById('lb-sort')?.value || 'elo';
+  withDecay.sort((x,y)=>{
+    const px=x.p, py=y.p;
+    const tx=px.wins+px.losses, ty=py.wins+py.losses;
+    const wrx=tx ? px.wins/tx : 0, wry=ty ? py.wins/ty : 0;
+    if(sortBy==='wins') return py.wins - px.wins || y.d.decayedElo - x.d.decayedElo;
+    if(sortBy==='winrate') return wry - wrx || y.d.decayedElo - x.d.decayedElo;
+    if(sortBy==='activity') return (ty - tx) || y.d.decayedElo - x.d.decayedElo;
+    return y.d.decayedElo - x.d.decayedElo;
+  });
+
+  const sorted = withDecay.map(x=>x.p);
   document.getElementById('lb-count').textContent=sorted.length+' players';
   const el=document.getElementById('leaderboard-list');
   if(!sorted.length){el.innerHTML='<div class="empty-state"><p>No players yet.</p></div>';return;}
@@ -433,11 +834,20 @@ function renderLeaderboard(){
     const rank=i+1, rc=rank<=3?`r${rank}`:'';
     const icon=rank===1?'🥇':rank===2?'🥈':rank===3?'🥉':rank;
     const total=p.wins+p.losses, wp=total?Math.round(p.wins/total*100):0;
+    const d=getDecay(p);
+    const canCrown = currentUser && currentUser.is_admin && currentUser.id === p.id;
     return `<div class="lb-row" onclick="showProfile('${p.id}')">
       <div class="lb-rank ${rc}">${icon}</div>
-      <div class="lb-name">${esc(p.name)}${p.is_admin?' 👑':''}</div>
-      <div class="lb-stats"><span class="lb-win">${p.wins}W</span><span class="lb-loss">${p.losses}L</span><span>${wp}%</span><span>${total} played</span></div>
-      <div class="lb-elo">${p.elo}</div>
+      <div class="lb-name">${esc(p.name)}${canCrown?' 👑':''}</div>
+      <div class="lb-stats">
+        <span class="lb-win">${p.wins}W</span>
+        <span class="lb-loss">${p.losses}L</span>
+        <span>${wp}%</span>
+        <span>${total} played</span>
+        <span>${d.inactiveDays}d idle</span>
+        <span>${d.lost>0?`-${d.lost} decay`:'No decay'}</span>
+      </div>
+      <div class="lb-elo">${d.decayedElo}</div>
     </div>`;
   }).join('');
 }
@@ -453,11 +863,11 @@ function renderHistory(){
     const sA=aWon?m.win_score:m.lose_score, sB=aWon?m.lose_score:m.win_score;
     const gA=m.gainA||0, gB=m.gainB||0;
     const date=m.ts?new Date(m.ts).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
-    const canDel=currentUser.is_admin;
+    const canDel=!!(currentUser && currentUser.is_admin);
     return `<div class="match-row">
       <div class="match-teams">
-        <div class="match-team ${aWon?'winner':''}">${esc(pa1)} & ${esc(pa2)} ${aWon?'👑':''}</div>
-        <div class="match-team ${!aWon?'winner':''}">${esc(pb1)} & ${esc(pb2)} ${!aWon?'👑':''}</div>
+        <div class="match-team ${aWon?'winner':''}">${esc(pa1)} & ${esc(pa2)}</div>
+        <div class="match-team ${!aWon?'winner':''}">${esc(pb1)} & ${esc(pb2)}</div>
       </div>
       <div style="text-align:center;min-width:50px"><div class="match-score">${sA}-${sB}</div><div class="match-date">${date}</div></div>
       <div class="match-elo-change">
@@ -470,20 +880,63 @@ function renderHistory(){
 }
 
 function renderPlayers(){
-  if(!currentUser.is_admin) return;
-  document.getElementById('roster-count').textContent=players.length+' players';
-  const el=document.getElementById('player-list');
-  if(!players.length){el.innerHTML='<div class="empty-state"><p>No players yet.</p></div>';return;}
-  el.innerHTML=[...players].sort((a,b)=>b.elo-a.elo).map(p=>{
-    const total=p.wins+p.losses, wp=total?Math.round(p.wins/total*100):0;
-    return `<div class="player-item">
-      <div class="player-item-name">${esc(p.name)}${p.is_admin?' 👑':''}</div>
-      <span style="font-size:12px;color:var(--text3);margin-right:8px">${p.wins}W ${p.losses}L ${wp}%</span>
-      <span class="player-item-elo">${p.elo}</span>
-      <button class="btn btn-ghost btn-sm" onclick="showProfile('${p.id}')">View</button>
-      ${p.id!==currentUser.id?`<button class="btn btn-danger btn-sm" onclick="deletePlayer('${p.id}')">Remove</button>`:'<span style="font-size:11px;color:var(--text3);padding:0 8px">you</span>'}
-    </div>`;
-  }).join('');
+  if(!currentUser || !currentUser.is_admin) return;
+
+  // Fill decay settings inputs
+  if(decaySettings){
+    document.getElementById('decay-grace').value = decaySettings.grace_period_days;
+    document.getElementById('decay-frequency').value = decaySettings.decay_frequency_days;
+    document.getElementById('decay-amount').value = decaySettings.decay_amount_per_step;
+    document.getElementById('decay-floor').value = decaySettings.elo_floor;
+  }
+
+  const el=document.getElementById('admin-users-list');
+  if(!el) return;
+  el.innerHTML='<div class="loading">Loading users...</div>';
+
+  supabaseClient.from('player_accounts').select('*').then(({data, error})=>{
+    if(error) throw error;
+    const byPlayerId = new Map(players.map(p=>[p.id,p]));
+    const html=(data||[]).map(ac=>{
+      const p = byPlayerId.get(ac.player_id);
+      if(!p) return '';
+      return `<div class="player-item" style="align-items:flex-start">
+        <div style="flex:1;min-width:160px">
+          <div class="player-item-name">${esc(p.name)}${ac.is_admin?' 👑':''}</div>
+          <div style="color:var(--text3);font-size:12px;margin-top:4px">
+            Disabled: ${ac.account_disabled?'Yes':'No'}<br>
+            Muted: ${ac.chat_muted_until?new Date(ac.chat_muted_until).toLocaleString():'No'}<br>
+            Banned: ${ac.chat_banned_until?new Date(ac.chat_banned_until).toLocaleString():'No'}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;min-width:200px">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+            <button class="btn btn-ghost btn-sm" onclick="setAdminFlag('${ac.player_id}', ${!ac.is_admin})">${ac.is_admin?'Unmake admin':'Make admin'}</button>
+            <button class="btn btn-danger btn-sm" onclick="setAccountDisabled('${ac.player_id}', ${!ac.account_disabled})">${ac.account_disabled?'Re-enable':'Disable'}</button>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+            <button class="btn btn-ghost btn-sm" onclick="muteUser('${ac.player_id}', 60)">Mute 1h</button>
+            <button class="btn btn-ghost btn-sm" onclick="banUser('${ac.player_id}', 60*24*7)">Ban 7d</button>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+            <button class="btn btn-ghost btn-sm" onclick="muteUser('${ac.player_id}', 0)">Clear mute</button>
+            <button class="btn btn-ghost btn-sm" onclick="banUser('${ac.player_id}', 0)">Clear ban</button>
+          </div>
+          <div style="width:100%;display:flex;gap:6px;align-items:end;justify-content:flex-end">
+            <div style="flex:1;min-width:120px">
+              <label class="form-label" style="margin-bottom:4px">Username</label>
+              <input class="form-input" id="rename-${ac.player_id}" value="${esc(p.name)}" maxlength="24">
+            </div>
+            <button class="btn btn-primary btn-sm" style="height:34px" onclick="renameUser('${ac.player_id}')">Save</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    el.innerHTML=html || '<div class="empty-state"><p>No users yet.</p></div>';
+  }).catch(e=>{
+    el.innerHTML='<div class="alert alert-error">Failed to load users.</div>';
+    console.error(e);
+  });
 }
 
 function renderStats(){
@@ -573,10 +1026,86 @@ function showProfile(pid){
   const initials=p.name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
   const hist=eloHistory[pid]||[];
   const pmatches=[...matches].filter(m=>[m.a1,m.a2,m.b1,m.b2].includes(pid)).sort((a,b)=>b.ts-a.ts).slice(0,8);
+  const canCrown = !!(currentUser && currentUser.is_admin && currentUser.id===p.id);
+  const getDecay = (p)=>{
+    if(!decaySettings || p.last_activity_at == null) return { decayedElo: p.elo, lost: 0, inactiveDays: 0, nextDecayAt: null, floored: false };
+    const now=Date.now();
+    const inactivityDays=Math.max(0,Math.floor((now - p.last_activity_at)/86400000));
+    const grace=decaySettings.grace_period_days ?? 0;
+    const freq=decaySettings.decay_frequency_days ?? 1;
+    const amount=decaySettings.decay_amount_per_step ?? 0;
+    const floor=decaySettings.elo_floor ?? 0;
+    const daysPastGrace=Math.max(0,inactivityDays - grace);
+    const steps=Math.floor(daysPastGrace / freq);
+    const rawLost=steps*amount;
+    const maxLost=Math.max(0,(p.elo ?? 1500)-floor);
+    const lost=Math.min(rawLost,maxLost);
+    const decayedElo=Math.max((p.elo ?? 1500)-lost,floor);
+    const floored=lost>=maxLost && maxLost>0;
+    let nextDecayAt=null;
+    if(!floored && p.last_activity_at){
+      const nextOffsetDays=grace + freq*(steps+1);
+      const candidate=p.last_activity_at + nextOffsetDays*86400000;
+      if(candidate>now) nextDecayAt=new Date(candidate);
+    }
+    return { decayedElo, lost, inactiveDays, nextDecayAt, floored };
+  };
+  const d=getDecay(p);
+  const nextText = d.nextDecayAt
+    ? d.nextDecayAt.toLocaleDateString('en-US',{month:'short',day:'numeric'})
+    : (d.floored ? 'Floor reached' : 'No decay yet');
+
+  const computeTopRival = (pid)=>{
+    const byOpponent = new Map(); // opponentId -> {games,wins,losses}
+    matches.forEach(m=>{
+      const onA = m.a1===pid || m.a2===pid;
+      const onB = m.b1===pid || m.b2===pid;
+      if(!onA && !onB) return;
+
+      const teamWon = onA ? m.winner==='A' : m.winner==='B';
+      const oppIds = onA ? [m.b1, m.b2] : [m.a1, m.a2];
+      const oppUnique = [...new Set(oppIds)].filter(oid=>oid && oid!==pid);
+
+      oppUnique.forEach(oid=>{
+        const rec = byOpponent.get(oid) || { games:0, wins:0, losses:0 };
+        rec.games++;
+        if(teamWon) rec.wins++; else rec.losses++;
+        byOpponent.set(oid, rec);
+      });
+    });
+
+    const entries = [...byOpponent.entries()].map(([id, rec])=>({
+      id,
+      games: rec.games,
+      wins: rec.wins,
+      losses: rec.losses,
+      winPct: rec.games ? rec.wins/rec.games : 0
+    }));
+
+    entries.sort((a,b)=>{
+      // Prefer more games, then closer to a balanced head-to-head.
+      const balA = Math.abs(0.5 - a.winPct);
+      const balB = Math.abs(0.5 - b.winPct);
+      return (b.games-a.games) || (balA - balB);
+    });
+
+    return entries[0] || null;
+  };
+
+  const topRival = computeTopRival(p.id);
+  const rivalSummary = topRival
+    ? `${esc(pName(topRival.id))}: ${topRival.wins}-${topRival.losses} (${Math.round(topRival.winPct*100)}%)`
+    : 'No rivalry data yet.';
   document.getElementById('profile-content').innerHTML=`
     <div class="profile-header">
       <div class="avatar">${initials}</div>
-      <div><div class="profile-name">${esc(p.name)}${p.is_admin?' 👑':''}</div><div class="profile-elo">${p.elo} ELO</div></div>
+      <div>
+        <div class="profile-name">${esc(p.name)}${canCrown?' 👑':''}</div>
+        <div class="profile-elo">${d.decayedElo} ELO</div>
+        <div style="color:var(--text3);font-size:12px;margin-top:4px">
+          Idle ${d.inactiveDays}d • Lost to decay: ${d.lost} • Next: ${esc(nextText)}
+        </div>
+      </div>
     </div>
     <div class="stat-grid">
       <div class="stat-card"><div class="stat-label">Wins</div><div class="stat-value" style="color:var(--win)">${p.wins}</div></div>
@@ -589,6 +1118,10 @@ function showProfile(pid){
     <div class="card">
       <div class="card-title">ELO Progression</div>
       <div class="chart-wrap"><canvas id="profileChart" role="img" aria-label="ELO history for ${esc(p.name)}"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Rivalry</div>
+      <div style="color:var(--text2);line-height:1.6;font-size:13px;margin-top:8px">${rivalSummary}</div>
     </div>
     <div class="card">
       <div class="card-title">Recent Matches</div>
@@ -635,8 +1168,8 @@ function populateSelects(){
     if(val) el.value=val;
   });
   updateScoreRange();
-  // Pre-select current user
-  if(!document.getElementById('a1').value && !currentUser.is_admin){
+  // Pre-select current user (non-admins must be participants)
+  if(currentUser && !currentUser.is_admin && !document.getElementById('a1').value){
     const uid=currentUser.id;
     const selects=['a1','a2','b1','b2'];
     for(const s of selects){
@@ -693,25 +1226,27 @@ async function submitMatch(){
   if(ls>=ws){msg.innerHTML='<div class="alert alert-error">Losing score must be less than winning score.</div>';return;}
 
   // Restriction: non-admin must be in the match
-  if(!currentUser.is_admin){
-    const uid=currentUser.id;
+  if(!currentUser || !currentUser.is_admin){
+    const uid=currentUser?.id;
+    if(!uid){ msg.innerHTML='<div class="alert alert-error">Please sign in.</div>'; return; }
     if(![a1,a2,b1,b2].includes(uid)){
       msg.innerHTML='<div class="alert alert-error">You can only record matches you played in.</div>';return;
     }
   }
 
   const match={
-    id:'m_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),
-    ts:Date.now(), a1, a2, b1, b2,
+    a1, a2, b1, b2,
     win_score:ws, lose_score:ls,
-    winner:selectedWinner
+    winner:selectedWinner,
+    created_by: myAuthUser?.id
   };
 
   try {
     msg.innerHTML='<div class="alert alert-info">Saving...</div>';
-    await sbInsert('matches', match);
-    await loadData();
-    renderAll();
+    if(!myAuthUser?.id){ throw new Error('Not authenticated.'); }
+    const { error } = await supabaseClient.from('matches').insert(match);
+    if(error) throw error;
+    await loadAndRender();
     msg.innerHTML='<div class="alert alert-success">Match recorded!</div>';
     selectedWinner=null;
     document.getElementById('winner-a').classList.remove('selected');
@@ -763,29 +1298,351 @@ async function deletePlayer(pid){
 }
 
 async function deleteMatch(mid){
-  if(!currentUser.is_admin) return;
+  if(!currentUser || !currentUser.is_admin) return;
   if(!confirm('Delete this match? ELO will be recalculated.')) return;
   try {
-    await sbDelete('matches',`id=eq.${mid}`);
-    await loadData();
-    renderAll();
+    const { error } = await supabaseClient.from('matches').delete().eq('id', mid);
+    if(error) throw error;
+    await loadAndRender();
   } catch(e){ alert('Error: '+e.message); }
 }
 
 // ---- Nav ----
 function showPage(name){
+  const protectedPages = new Set(['record','chat','stats','players']);
+  if(protectedPages.has(name) && !currentUser){
+    document.getElementById('login-screen').style.display='flex';
+    document.getElementById('onboarding-screen').style.display='none';
+    document.getElementById('login-form').style.display='';
+    return;
+  }
+
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('page-'+name)?.classList.add('active');
-  const idx={leaderboard:0,record:1,history:2,players:currentUser?.is_admin?3:-1,stats:currentUser?.is_admin?4:3};
-  const btns=document.querySelectorAll('.nav-btn');
-  if(idx[name]>=0) btns[idx[name]]?.classList.add('active');
+
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>{
+    const oc=b.getAttribute('onclick')||'';
+    if(oc.includes(`showPage('${name}')`)) b.classList.add('active');
+  });
+
   if(name==='stats') setTimeout(renderRankChart,80);
+  if(name==='chat' && currentUser) ensureChat();
 }
 
 // ---- Utils ----
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function pName(id){return players.find(p=>p.id===id)?.name||'Unknown';}
+
+function currentPageIsChat(){
+  const el=document.getElementById('page-chat');
+  return !!(el && el.classList.contains('active'));
+}
+
+function clearRulesSearch(){
+  const el=document.getElementById('rules-search');
+  if(el) el.value='';
+  renderRulesSearch();
+}
+
+function renderRulesSearch(){
+  const input=document.getElementById('rules-search');
+  const q=(input?.value||'').trim().toLowerCase();
+  const details=[...document.querySelectorAll('#page-rules details')];
+  if(!q){
+    details.forEach(d=>d.style.display='');
+    return;
+  }
+  details.forEach(d=>{
+    const summary=(d.querySelector('summary')?.innerText||'').toLowerCase();
+    const body=(d.innerText||'').toLowerCase();
+    d.style.display=(summary.includes(q)||body.includes(q))?'':'none';
+  });
+}
+
+function setupRulesSearch(){
+  const input=document.getElementById('rules-search');
+  if(!input) return;
+  input.addEventListener('input', renderRulesSearch);
+}
+
+let _leaderboardControlsBound=false;
+function setupLeaderboardControls(){
+  if(_leaderboardControlsBound) return;
+  _leaderboardControlsBound=true;
+  const s=document.getElementById('lb-search');
+  const sort=document.getElementById('lb-sort');
+  if(s) s.addEventListener('input', ()=>renderLeaderboard());
+  if(sort) sort.addEventListener('change', ()=>renderLeaderboard());
+}
+
+let _chatSetupDone=false;
+let _chatReloading=false;
+let _chatChannel=null;
+let _lastChatSendAt=0;
+let _chatMessagesCache=[];
+
+async function ensureChat(){
+  if(_chatSetupDone) return;
+  _chatSetupDone=true;
+  await loadChatMessages();
+  setupChatRealtime();
+}
+
+async function setupChat(){
+  await ensureChat();
+}
+
+async function loadChatMessages(){
+  const container=document.getElementById('chat-messages');
+  if(!container) return;
+  container.innerHTML='<div class="loading" style="padding:18px">Loading chat…</div>';
+
+  const { data, error } = await supabaseClient
+    .from('chat_messages')
+    .select('*')
+    .eq('room','main')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: true })
+    .limit(200);
+
+  if(error){
+    container.innerHTML='<div class="alert alert-error">Failed to load chat.</div>';
+    throw error;
+  }
+  _chatMessagesCache=data||[];
+  renderChatMessages();
+}
+
+function renderChatMessages(){
+  const container=document.getElementById('chat-messages');
+  if(!container) return;
+  if(!_chatMessagesCache.length){
+    container.innerHTML='<div class="empty-state" style="padding:16px">No messages yet.</div>';
+    return;
+  }
+  const mineId=currentUser?.id;
+  const isAdmin=!!(currentUser&&currentUser.is_admin);
+  container.innerHTML=_chatMessagesCache.map(m=>{
+    const author=pName(m.player_id);
+    const ts=m.created_at?new Date(m.created_at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'';
+    const edited=m.edited_at?` (edited)`:'';
+    const mine=m.player_id===mineId;
+    const createdAtMs=m.created_at?new Date(m.created_at).getTime():0;
+    const canEdit=mine && m.deleted_at==null && (Date.now()-createdAtMs) <= 10*60*1000;
+    return `<div class="chat-msg" style="padding:10px 8px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start">
+      <div style="min-width:110px">
+        <div style="font-weight:700;color:var(--text2);font-size:12px">${esc(author)}${mine&&isAdmin?' 👑':''}</div>
+        <div style="color:var(--text3);font-size:11px;margin-top:2px">${esc(ts)}${edited}</div>
+      </div>
+      <div style="flex:1">
+        <div style="white-space:pre-wrap;word-break:break-word">${esc(m.content)}</div>
+        <div style="margin-top:6px;display:flex;gap:6px;justify-content:flex-end">
+          ${canEdit?`<button class="btn btn-ghost btn-sm" onclick="editChatMessage('${m.id}')">Edit</button>`:''}
+          ${((mine&&canEdit)||isAdmin)?`<button class="btn btn-danger btn-sm" onclick="deleteChatMessage('${m.id}')">Delete</button>`:''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Ensure we are scrolled to newest message.
+  container.scrollTop = container.scrollHeight;
+}
+
+function scheduleChatReload(){
+  if(_chatReloading) return;
+  _chatReloading=true;
+  setTimeout(async ()=>{
+    _chatReloading=false;
+    try{ await loadChatMessages(); }catch(e){ console.error(e); }
+  }, 300);
+}
+
+function setupChatRealtime(){
+  if(_chatChannel) return;
+  _chatChannel = supabaseClient
+    .channel('chat-main')
+    .on('postgres_changes', { event:'INSERT', schema:'public', table:'chat_messages', filter:'room=eq.main' }, ()=>scheduleChatReload())
+    .on('postgres_changes', { event:'UPDATE', schema:'public', table:'chat_messages', filter:'room=eq.main' }, ()=>scheduleChatReload())
+    .subscribe();
+}
+
+async function sendChatMessage(){
+  if(!currentUser || !myAuthUser){
+    document.getElementById('login-msg').innerHTML='<div class="alert alert-error">Please sign in to chat.</div>';
+    return;
+  }
+  const input=document.getElementById('chat-input');
+  if(!input) return;
+  const content=(input.value||'').trim();
+  input.value='';
+  if(!content){
+    input.value='';
+    return;
+  }
+  if(content.length>500){
+    document.getElementById('chat-status').style.display='block';
+    document.getElementById('chat-status').textContent='Message too long.';
+    return;
+  }
+
+  // Basic rate limit (client-side).
+  const now=Date.now();
+  if(now-_lastChatSendAt < 4000){
+    document.getElementById('chat-status').style.display='block';
+    document.getElementById('chat-status').textContent='Slow down a bit.';
+    return;
+  }
+  _lastChatSendAt=now;
+
+  // Minimal profanity blocking.
+  const blocked=['fuck','shit','bitch','asshole'];
+  const lower=content.toLowerCase();
+  if(blocked.some(w=>lower.includes(w))){
+    document.getElementById('chat-status').style.display='block';
+    document.getElementById('chat-status').textContent='Profanity is not allowed.';
+    return;
+  }
+
+  try{
+    document.getElementById('chat-status').style.display='none';
+    const { error } = await supabaseClient.from('chat_messages').insert({
+      room: 'main',
+      player_id: currentUser.id,
+      created_by: myAuthUser.id,
+      content
+    });
+    if(error) throw error;
+    input.value='';
+    scheduleChatReload();
+  }catch(e){
+    document.getElementById('chat-status').style.display='block';
+    document.getElementById('chat-status').textContent='Could not send message.';
+    console.error(e);
+  }
+}
+
+async function editChatMessage(id){
+  if(!currentUser || !myAuthUser) return;
+  const msg=_chatMessagesCache.find(m=>m.id===id);
+  if(!msg) return;
+  const createdAtMs=msg.created_at?new Date(msg.created_at).getTime():0;
+  const mine = msg.player_id===currentUser.id;
+  const isAdmin=!!(currentUser&&currentUser.is_admin);
+  const canEdit=mine && (Date.now()-createdAtMs)<=10*60*1000 && msg.deleted_at==null;
+  if(!canEdit && !isAdmin) return;
+
+  const next=prompt('Edit message', msg.content);
+  if(next==null) return;
+  const content=String(next).trim();
+  if(!content) return;
+  try{
+    const { error } = await supabaseClient.from('chat_messages').update({
+      content,
+      edited_at: new Date().toISOString()
+    }).eq('id', id);
+    if(error) throw error;
+    scheduleChatReload();
+  }catch(e){
+    alert('Edit failed.');
+    console.error(e);
+  }
+}
+
+async function deleteChatMessage(id){
+  if(!currentUser || !myAuthUser) return;
+  const msg=_chatMessagesCache.find(m=>m.id===id);
+  if(!msg) return;
+  const isAdmin=!!(currentUser&&currentUser.is_admin);
+  const mine=msg.player_id===currentUser.id;
+  const createdAtMs=msg.created_at?new Date(msg.created_at).getTime():0;
+  const canDelete=(isAdmin || (mine && (Date.now()-createdAtMs)<=10*60*1000));
+  if(!canDelete) return;
+
+  if(!confirm('Delete this message?')) return;
+  try{
+    const { error } = await supabaseClient.from('chat_messages').update({
+      deleted_at: new Date().toISOString()
+    }).eq('id', id);
+    if(error) throw error;
+    scheduleChatReload();
+  }catch(e){
+    alert('Delete failed.');
+    console.error(e);
+  }
+}
+
+async function saveDecaySettings(){
+  if(!currentUser || !currentUser.is_admin) return;
+  const grace=parseInt(document.getElementById('decay-grace').value);
+  const freq=parseInt(document.getElementById('decay-frequency').value);
+  const amount=parseInt(document.getElementById('decay-amount').value);
+  const floor=parseInt(document.getElementById('decay-floor').value);
+  const msg=document.getElementById('admin-decay-msg');
+  msg.textContent='Saving...';
+
+  const payload={
+    grace_period_days: Number.isFinite(grace)?grace:2,
+    decay_frequency_days: Number.isFinite(freq)&&freq>0?freq:3,
+    decay_amount_per_step: Number.isFinite(amount)&&amount>=0?amount:1,
+    elo_floor: Number.isFinite(floor)&&floor>=0?floor:1200,
+    updated_at: new Date().toISOString()
+  };
+
+  try{
+    const { data, error } = await supabaseClient.from('elo_decay_settings').update(payload).eq('id',1).select('*').single();
+    if(error) throw error;
+    decaySettings = data;
+    msg.textContent='Saved!';
+    renderLeaderboard();
+    if(currentUser && currentUser.is_admin) renderPlayers();
+  }catch(e){
+    msg.textContent='Failed to save settings.';
+    console.error(e);
+  }
+}
+
+async function setAdminFlag(playerId, nextIsAdmin){
+  if(!currentUser || !currentUser.is_admin) return;
+  await supabaseClient.from('player_accounts').update({ is_admin: !!nextIsAdmin }).eq('player_id', playerId);
+  await loadAndRender();
+}
+
+async function setAccountDisabled(playerId, nextDisabled){
+  if(!currentUser || !currentUser.is_admin) return;
+  await supabaseClient.from('player_accounts').update({ account_disabled: !!nextDisabled }).eq('player_id', playerId);
+  await loadAndRender();
+}
+
+async function muteUser(playerId, minutes){
+  if(!currentUser || !currentUser.is_admin) return;
+  const until = minutes && minutes>0 ? new Date(Date.now()+minutes*60*1000).toISOString() : null;
+  await supabaseClient.from('player_accounts').update({ chat_muted_until: until }).eq('player_id', playerId);
+  await loadAndRender();
+}
+
+async function banUser(playerId, minutes){
+  if(!currentUser || !currentUser.is_admin) return;
+  const until = minutes && minutes>0 ? new Date(Date.now()+minutes*60*1000).toISOString() : null;
+  await supabaseClient.from('player_accounts').update({ chat_banned_until: until }).eq('player_id', playerId);
+  await loadAndRender();
+}
+
+async function renameUser(playerId){
+  if(!currentUser || !currentUser.is_admin) return;
+  const input=document.getElementById(`rename-${playerId}`);
+  if(!input) return;
+  const next=(input.value||'').trim();
+  if(!next) return;
+  try{
+    const { error } = await supabaseClient.from('players').update({ name: next }).eq('id', playerId);
+    if(error) throw error;
+    await loadAndRender();
+  }catch(e){
+    alert('Username update failed (maybe already taken).');
+    console.error(e);
+  }
+}
 
 // ---- Boot ----
 (function(){
@@ -795,13 +1652,9 @@ function pName(id){return players.find(p=>p.id===id)?.name||'Unknown';}
     return;
   }
   document.getElementById('config-banner').style.display='none';
-  // Try restoring session
-  const savedId=localStorage.getItem('spikeelo_user');
-  initLogin().then(()=>{
-    if(savedId){
-      const p=players.find(x=>x.id===savedId);
-      if(p){currentUser=p;startApp();}
-    }
+  initAuth().catch(e=>{
+    console.error(e);
+    document.getElementById('login-msg').innerHTML='<div class="alert alert-error">Auth init failed.</div>';
   });
 })();
 </script>
