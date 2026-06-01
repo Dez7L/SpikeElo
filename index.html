@@ -161,21 +161,17 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
     <div id="login-loading" class="loading" style="display:none">Loading...</div>
     <div id="login-form">
       <div class="form-group" style="text-align:left">
-        <label class="form-label" for="email-input">Email</label>
-        <input class="form-input" id="email-input" placeholder="you@example.com" inputmode="email" autocomplete="email">
-      </div>
-      <button class="btn btn-primary btn-full" onclick="sendMagicLink()">Continue with Email</button>
-      <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="continueAsGuest()">Continue as Guest</button>
-      <div class="loading" id="magic-sending" style="display:none">Sending magic link...</div>
-    </div>
-
-    <div id="onboarding-screen" style="display:none;margin-top:14px">
-      <div class="login-sub" style="margin-bottom:10px">Choose your Spikeball username</div>
-      <div class="form-group" style="text-align:left;margin-top:6px">
         <label class="form-label" for="username-input">Username</label>
-        <input class="form-input" id="username-input" placeholder="e.g. The Net Wars" maxlength="24">
+        <input class="form-input" id="username-input" placeholder="Create new username (3-24 chars)" maxlength="24">
       </div>
-      <button class="btn btn-ghost btn-full" onclick="submitUsername()">Set Username</button>
+      <button class="btn btn-primary btn-full" onclick="createLocalAccount()">Create Account</button>
+      <div style="height:8px"></div>
+      <div class="card-title" style="margin-bottom:8px">Or choose existing user</div>
+      <select class="form-select" id="existing-user-select"></select>
+      <div style="height:8px"></div>
+      <button class="btn btn-ghost btn-full" onclick="useExistingUser()">Continue with Selected User</button>
+      <button class="btn btn-ghost btn-full" style="margin-top:8px" onclick="continueAsGuest()">Continue as Guest</button>
+      <div class="loading" id="magic-sending" style="display:none">Working...</div>
     </div>
 
     <div id="login-msg"></div>
@@ -437,7 +433,6 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 // ============================================================
 const SUPABASE_URL = 'https://jojrekrpfmpofwprosxk.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpvanJla3JwZm1wb2Z3cHJvc3hrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAxNjUzMTQsImV4cCI6MjA5NTc0MTMxNH0.RNMSrv0msySs3pPdNvJDo33f7CvlGLm_eR7fO08d_yw';
-const SITE_URL = 'https://dez7l.github.io/SpikeElo/';
 const { createClient } = supabase;
 const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
@@ -447,9 +442,7 @@ const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const BASE_WIN_K = 30, BASE_LOSS_K = 20;
 
 let currentUser = null;
-let myAuthUser = null;
-let myAccount = null;
-let myPlayerId = null;
+let localPlayerId = null;
 let decaySettings = null;
 let players = [];
 let matches = [];
@@ -545,17 +538,35 @@ async function loadData(){
   recalcELO();
 }
 
-// ---- Auth + Onboarding ----
-async function initAuth(){
-  // Default state: public leaderboard visible, protected actions hidden.
+// ---- Local username account flow ----
+function getAdminId(){
+  return localStorage.getItem('spikeelo_admin_id');
+}
+function setAdminId(id){
+  localStorage.setItem('spikeelo_admin_id', id);
+}
+
+function syncCurrentUserAdminFlag(){
+  if(!currentUser) return;
+  currentUser.is_admin = currentUser.id === getAdminId();
+}
+
+function populateExistingUsers(){
+  const el = document.getElementById('existing-user-select');
+  if(!el) return;
+  const options = ['<option value="">-- Select user --</option>']
+    .concat(players.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`));
+  el.innerHTML = options.join('');
+}
+
+async function initLocalLogin(){
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('login-loading').style.display='none';
   document.getElementById('login-msg').innerHTML='';
   document.getElementById('magic-sending').style.display='none';
-
   document.getElementById('login-form').style.display='';
-  document.getElementById('onboarding-screen').style.display='none';
 
+  document.getElementById('app').style.display='block';
   document.getElementById('nav-record').style.display='none';
   document.getElementById('nav-history').style.display='';
   document.getElementById('nav-chat').style.display='none';
@@ -564,88 +575,18 @@ async function initAuth(){
   document.getElementById('nav-login').style.display='';
   document.getElementById('nav-logout').style.display='none';
   document.getElementById('nav-username').textContent='Guest';
-  document.getElementById('app').style.display='block';
 
-  const { data: sessionData, error: sessionError } = await supabaseClient.auth.getSession();
-  if(sessionError) console.error(sessionError);
-  const session = sessionData?.session || null;
-  myAuthUser = session ? session.user : null;
-  myAccount = null;
-  myPlayerId = null;
-  currentUser = null;
-
-  if(myAuthUser){
-    const { data: acct, error: acctError } = await supabaseClient
-      .from('player_accounts')
-      .select('*')
-      .eq('auth_user_id', myAuthUser.id)
-      .maybeSingle();
-
-    if(acctError) console.error(acctError);
-
-    if(acct){
-      if(acct.account_disabled){
-        document.getElementById('login-msg').innerHTML='<div class="alert alert-error">Your account is disabled.</div>';
-        await supabaseClient.auth.signOut();
-        myAuthUser = null;
-        currentUser = null;
-      } else {
-        myAccount = acct;
-        myPlayerId = acct.player_id;
-      }
-    } else {
-      // First login: pick a username
-      document.getElementById('login-form').style.display='none';
-      document.getElementById('onboarding-screen').style.display='block';
-      document.getElementById('login-msg').innerHTML='<div class="alert alert-info">Welcome! Pick a unique Spikeball username.</div>';
-    }
-  }
-
-  // Load public data and render leaderboard/history.
+  localPlayerId = localStorage.getItem('spikeelo_user_id');
   await loadAndRender();
+  populateExistingUsers();
 
-  // If we have a linked player account, enable protected nav.
-  if(myPlayerId && currentUser){
-    document.getElementById('login-screen').style.display='none';
-    document.getElementById('app').style.display='block';
-    document.getElementById('nav-username').textContent = currentUser.name;
-    document.getElementById('nav-record').style.display='';
-    document.getElementById('nav-history').style.display='';
-    document.getElementById('nav-chat').style.display='';
-    document.getElementById('nav-stats').style.display='';
-    document.getElementById('nav-login').style.display='none';
-    document.getElementById('nav-logout').style.display='';
-    if(currentUser.is_admin) document.getElementById('nav-players').style.display='';
+  if(localPlayerId && currentUser){
+    enterAppAsCurrentUser();
   }
 
   setupRulesSearch();
   setupLeaderboardControls();
   setRestrictedNote();
-  if(myPlayerId && currentPageIsChat()) setupChat(); // initialize chat only for authed users
-}
-
-async function sendMagicLink(){
-  const emailEl=document.getElementById('email-input');
-  const email=(emailEl.value||'').trim();
-  const msg=document.getElementById('login-msg');
-  msg.innerHTML='';
-  if(!email || !email.includes('@')){
-    msg.innerHTML='<div class="alert alert-error">Enter a valid email address.</div>';
-    return;
-  }
-  document.getElementById('magic-sending').style.display='';
-  try{
-    const { error } = await supabaseClient.auth.signInWithOtp({
-      email,
-      options:{ emailRedirectTo: SITE_URL }
-    });
-    if(error) throw error;
-    msg.innerHTML='<div class="alert alert-info">Check your email for the magic link.</div>';
-  } catch(e){
-    msg.innerHTML=`<div class="alert alert-error">Error: ${esc(e.message)}</div>`;
-  } finally {
-    document.getElementById('magic-sending').style.display='none';
-  }
 }
 
 function continueAsGuest(){
@@ -656,69 +597,53 @@ function continueAsGuest(){
 
 function openLogin(){
   document.getElementById('login-screen').style.display='flex';
+  populateExistingUsers();
 }
 
-async function submitUsername(){
+function enterAppAsCurrentUser(){
+  if(!currentUser) return;
+  syncCurrentUserAdminFlag();
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='block';
+  document.getElementById('nav-username').textContent = currentUser.name;
+  document.getElementById('nav-record').style.display='';
+  document.getElementById('nav-history').style.display='';
+  document.getElementById('nav-chat').style.display='';
+  document.getElementById('nav-stats').style.display='';
+  document.getElementById('nav-login').style.display='none';
+  document.getElementById('nav-logout').style.display='';
+  document.getElementById('nav-players').style.display = currentUser.is_admin ? '' : 'none';
+  setRestrictedNote();
+}
+
+async function createLocalAccount(){
   const usernameEl=document.getElementById('username-input');
   const username=(usernameEl.value||'').trim();
   const msg=document.getElementById('login-msg');
   msg.innerHTML='';
-
-  if(username.length < 3){
-    msg.innerHTML='<div class="alert alert-error">Username must be at least 3 characters.</div>';
-    return;
-  }
-  if(username.length > 24){
-    msg.innerHTML='<div class="alert alert-error">Username must be 24 characters or fewer.</div>';
-    return;
-  }
-  if(!/^[a-zA-Z0-9 _-]+$/.test(username)){
-    msg.innerHTML='<div class="alert alert-error">Use only letters, numbers, spaces, underscores, and hyphens.</div>';
-    return;
-  }
-  if(!myAuthUser){
-    msg.innerHTML='<div class="alert alert-error">Please sign in again.</div>';
-    return;
-  }
+  if(username.length < 3){ msg.innerHTML='<div class="alert alert-error">Username must be at least 3 characters.</div>'; return; }
+  if(username.length > 24){ msg.innerHTML='<div class="alert alert-error">Username must be 24 characters or fewer.</div>'; return; }
+  if(!/^[a-zA-Z0-9 _-]+$/.test(username)){ msg.innerHTML='<div class="alert alert-error">Use only letters, numbers, spaces, underscores, and hyphens.</div>'; return; }
 
   document.getElementById('magic-sending').style.display='';
   try{
-    const { data: playerData, error: playerError } = await supabaseClient
-      .from('players')
-      .insert({ name: username })
-      .select('id,name')
-      .single();
+    const existing = players.find(p=>p.name.toLowerCase()===username.toLowerCase());
+    let pid = existing?.id || null;
+    if(!pid){
+      const { data, error } = await supabaseClient.from('players').insert({ name: username }).select('id,name').single();
+      if(error) throw error;
+      pid = data.id;
+    }
+    localStorage.setItem('spikeelo_user_id', pid);
+    localPlayerId = pid;
 
-    if(playerError) throw playerError;
-    const { error: acctError } = await supabaseClient
-      .from('player_accounts')
-      .insert({ player_id: playerData.id, auth_user_id: myAuthUser.id });
-    if(acctError) throw acctError;
-
-    // Refresh account + player
-    const { data: acct } = await supabaseClient
-      .from('player_accounts')
-      .select('*')
-      .eq('auth_user_id', myAuthUser.id)
-      .single();
-
-    myAccount = acct;
-    myPlayerId = acct.player_id;
-    document.getElementById('login-screen').style.display='none';
-    document.getElementById('app').style.display='block';
-    document.getElementById('login-msg').innerHTML='<div class="alert alert-success">Profile created!</div>';
+    // First account on this device becomes admin for convenience.
+    if(!getAdminId()) setAdminId(pid);
 
     await loadAndRender();
-    document.getElementById('nav-username').textContent = currentUser?.name || 'Player';
-    document.getElementById('nav-record').style.display='';
-    document.getElementById('nav-history').style.display='';
-    document.getElementById('nav-chat').style.display='';
-    document.getElementById('nav-stats').style.display='';
-    document.getElementById('nav-login').style.display='none';
-    document.getElementById('nav-logout').style.display='';
-    if(currentUser?.is_admin) document.getElementById('nav-players').style.display='';
-
-    setRestrictedNote();
+    if(!currentUser){ throw new Error('Could not load new account.'); }
+    enterAppAsCurrentUser();
+    msg.innerHTML='';
   } catch(e){
     msg.innerHTML=`<div class="alert alert-error">Could not create profile: ${esc(e.message)}</div>`;
   } finally {
@@ -726,21 +651,37 @@ async function submitUsername(){
   }
 }
 
+async function useExistingUser(){
+  const select=document.getElementById('existing-user-select');
+  const pid=select?.value || '';
+  const msg=document.getElementById('login-msg');
+  msg.innerHTML='';
+  if(!pid){
+    msg.innerHTML='<div class="alert alert-error">Choose a user first.</div>';
+    return;
+  }
+  localStorage.setItem('spikeelo_user_id', pid);
+  localPlayerId = pid;
+  await loadAndRender();
+  if(!currentUser){
+    msg.innerHTML='<div class="alert alert-error">Could not load selected user.</div>';
+    return;
+  }
+  enterAppAsCurrentUser();
+}
+
 async function logout(){
-  try{ await supabaseClient.auth.signOut(); } catch(e){}
-  myAuthUser = null;
-  myAccount = null;
-  myPlayerId = null;
   currentUser = null;
+  localPlayerId = null;
+  localStorage.removeItem('spikeelo_user_id');
 
   document.getElementById('login-screen').style.display='flex';
   document.getElementById('app').style.display='block';
   document.getElementById('login-form').style.display='';
-  document.getElementById('onboarding-screen').style.display='none';
   document.getElementById('login-msg').innerHTML='';
 
-  // Re-render public leaderboard without an authenticated player.
   await loadAndRender();
+  populateExistingUsers();
   document.getElementById('nav-username').textContent='Guest';
   document.getElementById('nav-record').style.display='none';
   document.getElementById('nav-history').style.display='';
@@ -765,8 +706,12 @@ function setRestrictedNote(){
 // ---- Render ----
 async function loadAndRender(){
   await loadData();
-  currentUser = myPlayerId ? players.find(p=>p.id===myPlayerId) : null;
-  if(currentUser && myAccount) currentUser.is_admin = myAccount.is_admin;
+  currentUser = localPlayerId ? players.find(p=>p.id===localPlayerId) : null;
+  if(localPlayerId && !currentUser){
+    localPlayerId = null;
+    localStorage.removeItem('spikeelo_user_id');
+  }
+  syncCurrentUserAdminFlag();
   renderAll();
 }
 
@@ -892,51 +837,27 @@ function renderPlayers(){
 
   const el=document.getElementById('admin-users-list');
   if(!el) return;
-  el.innerHTML='<div class="loading">Loading users...</div>';
-
-  supabaseClient.from('player_accounts').select('*').then(({data, error})=>{
-    if(error) throw error;
-    const byPlayerId = new Map(players.map(p=>[p.id,p]));
-    const html=(data||[]).map(ac=>{
-      const p = byPlayerId.get(ac.player_id);
-      if(!p) return '';
-      return `<div class="player-item" style="align-items:flex-start">
-        <div style="flex:1;min-width:160px">
-          <div class="player-item-name">${esc(p.name)}${ac.is_admin?' 👑':''}</div>
-          <div style="color:var(--text3);font-size:12px;margin-top:4px">
-            Disabled: ${ac.account_disabled?'Yes':'No'}<br>
-            Muted: ${ac.chat_muted_until?new Date(ac.chat_muted_until).toLocaleString():'No'}<br>
-            Banned: ${ac.chat_banned_until?new Date(ac.chat_banned_until).toLocaleString():'No'}
-          </div>
+  const adminId = getAdminId();
+  const html=[...players].sort((a,b)=>a.name.localeCompare(b.name)).map(p=>{
+    return `<div class="player-item" style="align-items:flex-start">
+      <div style="flex:1;min-width:160px">
+        <div class="player-item-name">${esc(p.name)}${p.id===adminId?' 👑':''}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;min-width:220px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" onclick="setAdminFlag('${p.id}', true)">${p.id===adminId?'Current admin':'Make admin'}</button>
         </div>
-        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;min-width:200px">
-          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-            <button class="btn btn-ghost btn-sm" onclick="setAdminFlag('${ac.player_id}', ${!ac.is_admin})">${ac.is_admin?'Unmake admin':'Make admin'}</button>
-            <button class="btn btn-danger btn-sm" onclick="setAccountDisabled('${ac.player_id}', ${!ac.account_disabled})">${ac.account_disabled?'Re-enable':'Disable'}</button>
+        <div style="width:100%;display:flex;gap:6px;align-items:end;justify-content:flex-end">
+          <div style="flex:1;min-width:120px">
+            <label class="form-label" style="margin-bottom:4px">Username</label>
+            <input class="form-input" id="rename-${p.id}" value="${esc(p.name)}" maxlength="24">
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-            <button class="btn btn-ghost btn-sm" onclick="muteUser('${ac.player_id}', 60)">Mute 1h</button>
-            <button class="btn btn-ghost btn-sm" onclick="banUser('${ac.player_id}', 60*24*7)">Ban 7d</button>
-          </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-            <button class="btn btn-ghost btn-sm" onclick="muteUser('${ac.player_id}', 0)">Clear mute</button>
-            <button class="btn btn-ghost btn-sm" onclick="banUser('${ac.player_id}', 0)">Clear ban</button>
-          </div>
-          <div style="width:100%;display:flex;gap:6px;align-items:end;justify-content:flex-end">
-            <div style="flex:1;min-width:120px">
-              <label class="form-label" style="margin-bottom:4px">Username</label>
-              <input class="form-input" id="rename-${ac.player_id}" value="${esc(p.name)}" maxlength="24">
-            </div>
-            <button class="btn btn-primary btn-sm" style="height:34px" onclick="renameUser('${ac.player_id}')">Save</button>
-          </div>
+          <button class="btn btn-primary btn-sm" style="height:34px" onclick="renameUser('${p.id}')">Save</button>
         </div>
-      </div>`;
-    }).join('');
-    el.innerHTML=html || '<div class="empty-state"><p>No users yet.</p></div>';
-  }).catch(e=>{
-    el.innerHTML='<div class="alert alert-error">Failed to load users.</div>';
-    console.error(e);
-  });
+      </div>
+    </div>`;
+  }).join('');
+  el.innerHTML=html || '<div class="empty-state"><p>No users yet.</p></div>';
 }
 
 function renderStats(){
@@ -1237,13 +1158,11 @@ async function submitMatch(){
   const match={
     a1, a2, b1, b2,
     win_score:ws, lose_score:ls,
-    winner:selectedWinner,
-    created_by: myAuthUser?.id
+    winner:selectedWinner
   };
 
   try {
     msg.innerHTML='<div class="alert alert-info">Saving...</div>';
-    if(!myAuthUser?.id){ throw new Error('Not authenticated.'); }
     const { error } = await supabaseClient.from('matches').insert(match);
     if(error) throw error;
     await loadAndRender();
@@ -1312,7 +1231,6 @@ function showPage(name){
   const protectedPages = new Set(['record','chat','stats','players']);
   if(protectedPages.has(name) && !currentUser){
     document.getElementById('login-screen').style.display='flex';
-    document.getElementById('onboarding-screen').style.display='none';
     document.getElementById('login-form').style.display='';
     return;
   }
@@ -1468,7 +1386,7 @@ function setupChatRealtime(){
 }
 
 async function sendChatMessage(){
-  if(!currentUser || !myAuthUser){
+  if(!currentUser){
     document.getElementById('login-msg').innerHTML='<div class="alert alert-error">Please sign in to chat.</div>';
     return;
   }
@@ -1509,7 +1427,6 @@ async function sendChatMessage(){
     const { error } = await supabaseClient.from('chat_messages').insert({
       room: 'main',
       player_id: currentUser.id,
-      created_by: myAuthUser.id,
       content
     });
     if(error) throw error;
@@ -1523,7 +1440,7 @@ async function sendChatMessage(){
 }
 
 async function editChatMessage(id){
-  if(!currentUser || !myAuthUser) return;
+  if(!currentUser) return;
   const msg=_chatMessagesCache.find(m=>m.id===id);
   if(!msg) return;
   const createdAtMs=msg.created_at?new Date(msg.created_at).getTime():0;
@@ -1550,7 +1467,7 @@ async function editChatMessage(id){
 }
 
 async function deleteChatMessage(id){
-  if(!currentUser || !myAuthUser) return;
+  if(!currentUser) return;
   const msg=_chatMessagesCache.find(m=>m.id===id);
   if(!msg) return;
   const isAdmin=!!(currentUser&&currentUser.is_admin);
@@ -1604,28 +1521,10 @@ async function saveDecaySettings(){
 
 async function setAdminFlag(playerId, nextIsAdmin){
   if(!currentUser || !currentUser.is_admin) return;
-  await supabaseClient.from('player_accounts').update({ is_admin: !!nextIsAdmin }).eq('player_id', playerId);
+  if(!nextIsAdmin) return;
+  setAdminId(playerId);
   await loadAndRender();
-}
-
-async function setAccountDisabled(playerId, nextDisabled){
-  if(!currentUser || !currentUser.is_admin) return;
-  await supabaseClient.from('player_accounts').update({ account_disabled: !!nextDisabled }).eq('player_id', playerId);
-  await loadAndRender();
-}
-
-async function muteUser(playerId, minutes){
-  if(!currentUser || !currentUser.is_admin) return;
-  const until = minutes && minutes>0 ? new Date(Date.now()+minutes*60*1000).toISOString() : null;
-  await supabaseClient.from('player_accounts').update({ chat_muted_until: until }).eq('player_id', playerId);
-  await loadAndRender();
-}
-
-async function banUser(playerId, minutes){
-  if(!currentUser || !currentUser.is_admin) return;
-  const until = minutes && minutes>0 ? new Date(Date.now()+minutes*60*1000).toISOString() : null;
-  await supabaseClient.from('player_accounts').update({ chat_banned_until: until }).eq('player_id', playerId);
-  await loadAndRender();
+  if(currentUser) enterAppAsCurrentUser();
 }
 
 async function renameUser(playerId){
@@ -1652,9 +1551,9 @@ async function renameUser(playerId){
     return;
   }
   document.getElementById('config-banner').style.display='none';
-  initAuth().catch(e=>{
+  initLocalLogin().catch(e=>{
     console.error(e);
-    document.getElementById('login-msg').innerHTML='<div class="alert alert-error">Auth init failed.</div>';
+    document.getElementById('login-msg').innerHTML='<div class="alert alert-error">Login init failed.</div>';
   });
 })();
 </script>
